@@ -1,22 +1,20 @@
 import 'package:flutter/material.dart';
-import 'package:web_socket_channel/web_socket_channel.dart';
 import 'dart:convert';
 import 'dart:async';
 
 import 'package:client_chat/models/chat_models.dart';
 import 'login_page.dart';
 import 'package:client_chat/database_helper.dart';
+import 'package:client_chat/secure_channel_wrapper.dart';
 
 class HomePage extends StatefulWidget {
   final String username;
-  final Stream<dynamic> stream;
-  final WebSocketSink sink;
+  final SecureChannelWrapper secureChannel;
 
   const HomePage({
     super.key,
     required this.username,
-    required this.stream,
-    required this.sink,
+    required this.secureChannel,
   });
 
   @override
@@ -38,11 +36,11 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
 
-    _streamSubscription = widget.stream.listen(_handleServerMessage);
+    _streamSubscription = widget.secureChannel.stream.listen(_handleServerMessage);
 
-    widget.sink.add(jsonEncode({"type": "REQUEST_USER_LIST"}));
+    widget.secureChannel.send(jsonEncode({"type": "REQUEST_USER_LIST"}));
 
-    widget.sink.add(jsonEncode({"type": "REQUEST_OFFLINE_MESSAGES"}));
+    widget.secureChannel.send(jsonEncode({"type": "REQUEST_OFFLINE_MESSAGES"}));
   }
 
   // processar todas as mensagens do servidor
@@ -106,13 +104,13 @@ class _HomePageState extends State<HomePage> {
 
     // Envia o status START_TYPING
     if (_typingUsers.add(widget.username)) {
-      widget.sink.add(
+      widget.secureChannel.send(
         jsonEncode({"type": "START_TYPING", "to": _currentChatPartner}),
       );
     }
 
     _typingTimer = Timer(const Duration(seconds: 2), () {
-      widget.sink.add(
+      widget.secureChannel.send(
         jsonEncode({"type": "STOP_TYPING", "to": _currentChatPartner}),
       );
       _typingUsers.remove(widget.username);
@@ -123,11 +121,11 @@ class _HomePageState extends State<HomePage> {
     if (_controller.text.isNotEmpty && _currentChatPartner != null) {
       _typingTimer?.cancel();
 
-      widget.sink.add(
+      widget.secureChannel.send(
         jsonEncode({"type": "STOP_TYPING", "to": _currentChatPartner}),
       );
 
-      widget.sink.add(
+      widget.secureChannel.send(
         jsonEncode({
           "type": "chat_message",
           "to": _currentChatPartner,
@@ -170,7 +168,7 @@ class _HomePageState extends State<HomePage> {
   void dispose() {
     _streamSubscription.cancel();
     _typingTimer?.cancel();
-    widget.sink.close();
+    widget.secureChannel.close();
     super.dispose();
   }
 

@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:web_socket_channel/web_socket_channel.dart';
 import 'dart:convert';
-
 import 'home_page.dart';
 import 'register_page.dart';
 import 'package:client_chat/database_helper.dart';
+
+import 'package:client_chat/secure_channel_wrapper.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -28,72 +28,76 @@ class _LoginPageState extends State<LoginPage> {
     final username = _emailController.text;
     final password = _passwordController.text;
 
+    try {
+      // 1. Conecta e executa o handshake
+      final secureChannel = SecureChannelWrapper();
+      // O connectAndHandshake faz todo o trabalho de DHE+Salt+HKDF
+      await secureChannel.connectAndHandshake('ws://10.0.2.2:12345');
+      
 
-    final wsUrl = Uri.parse('ws://10.0.2.2:12345');
-    final channel = WebSocketChannel.connect(wsUrl);
-    final stream = channel.stream.asBroadcastStream();
-
-    stream.listen(
-      (message) async{
-        final data = jsonDecode(message);
-        if (data['type'] == 'auth_response') {
-          if (data['status'] == 'LOGIN_SUCCESS') {
-            if (mounted) {
-
-              await DatabaseHelper.instance.initForUser(username);
-
-              Navigator.pushReplacement(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => HomePage(
-                    username: username,
-                    stream: stream,
-                    sink: channel.sink,
+      // 2. Ouve as respostas (agora no stream seguro)
+      secureChannel.stream.listen(
+        (message) async {
+          final data = jsonDecode(message);
+          if (data['type'] == 'auth_response') {
+            if (data['status'] == 'LOGIN_SUCCESS') {
+              if (mounted) {
+                await DatabaseHelper.instance.initForUser(username);
+                Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(
+                    // Passa o canal seguro para a HomePage
+                    builder: (context) => HomePage(
+                      username: username,
+                      secureChannel: secureChannel,
+                    ),
                   ),
-                ),
+                );
+              }
+            } else {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Falha no login: ${data['message']}')),
               );
-            }
-          } else {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Usuário ou senha incorretos.')),
-            );
-            channel.sink.close();
-            if (mounted) {
-              setState(() {
-                _isLoading = false;
-              });
+              secureChannel.close();
+              setState(() { _isLoading = false; });
             }
           }
-        }
-      },
-      onError: (error) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Erro ao conectar ao servidor.')),
-        );
-        channel.sink.close();
-        if (mounted) {
-          setState(() {
-            _isLoading = false;
-          });
-        }
-      },
-      onDone: () {
-        if (mounted) {
-          setState(() {
-            _isLoading = false;
-          });
-        }
-      },
-    );
+        },
+        onError: (error) {
+          print("Erro no canal seguro: $error");
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Erro de conexão: $error')),
+          );
+          secureChannel.close();
+          setState(() { _isLoading = false; });
+        },
+        onDone: () {
+          print("Canal seguro desconectado.");
+          // Se o canal fechar inesperadamente, para o loading
+          if (_isLoading) {
+            setState(() { _isLoading = false; });
+          }
+        },
+      );
 
-    final loginData = {
-      "type": "LOGIN",
-      "username": username,
-      "password": password,
-    };
-    channel.sink.add(jsonEncode(loginData));
+     
+      final loginData = {
+        "type": "LOGIN",
+        "username": username,
+        "password": password,
+      };
+     
+      secureChannel.send(jsonEncode(loginData));
+
+    }
+    catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Falha no Handshake: $e')),
+      );
+      setState(() { _isLoading = false; });
+    }
   }
-
+ 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
