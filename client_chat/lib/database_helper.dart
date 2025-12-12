@@ -1,5 +1,3 @@
-// lib/database_helper.dart
-
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:client_chat/models/chat_models.dart';
@@ -12,7 +10,8 @@ class DatabaseHelper {
   static const columnConteudo = 'conteudo';
   static const columnTimestamp = 'timestamp';
   static const _tableConversas = 'conversas';
-  static const _tableKeyStore = 'key_store';  
+  static const _tableKeyStore = 'key_store'; 
+  static const _tableSessionKeys = 'session_keys'; 
 
   DatabaseHelper._privateConstructor();
   static final DatabaseHelper instance = DatabaseHelper._privateConstructor();
@@ -22,7 +21,6 @@ class DatabaseHelper {
 
   Future<void> initForUser(String username) async {
     if (_currentUser == username && _database != null) {
-      // Já está inicializado para este usuário
       return;
     }
     _currentUser = username;
@@ -40,7 +38,6 @@ class DatabaseHelper {
     return _database!;
   }
 
-  // SQL para criar a tabela
   Future _onCreate(Database db, int version) async {
     await db.execute('''
           CREATE TABLE $_tableConversas (
@@ -51,8 +48,7 @@ class DatabaseHelper {
             timestamp INTEGER NOT NULL
           )
           ''');
-    
-    // NOVO: Tabela para guardar as chaves (privada e pública)
+
     await db.execute('''
           CREATE TABLE $_tableKeyStore (
             _id INTEGER PRIMARY KEY,
@@ -60,11 +56,18 @@ class DatabaseHelper {
             public_key TEXT NOT NULL
           )
           ''');
+
+    await db.execute('''
+          CREATE TABLE $_tableSessionKeys (
+            peer_username TEXT PRIMARY KEY,
+            aes_key TEXT NOT NULL,
+            hmac_key TEXT NOT NULL
+          )
+          ''');
   }
 
   Future<void> saveKeyPair(String privateKey, String publicKey) async {
     Database db = await instance.database;
-    // Apaga chaves antigas e insere as novas. Usamos ID 1 fixo.
     await db.delete(_tableKeyStore); 
     await db.insert(_tableKeyStore, {
       '_id': 1,
@@ -83,7 +86,6 @@ class DatabaseHelper {
     return null;
   }
 
-  // Método para inserir uma mensagem
   Future<int> insertMessage(ChatMessage message, String destinatario) async {
     Database db = await instance.database;
     return await db.insert(_tableConversas, {
@@ -94,7 +96,33 @@ class DatabaseHelper {
     });
   }
 
-  // Método para buscar o histórico de uma conversa entre dois usuários
+  Future<void> saveSessionKeys(String peerUsername, String aesKeyB64, String hmacKeyB64) async {
+    Database db = await instance.database;
+    await db.insert(_tableSessionKeys, {
+      'peer_username': peerUsername,
+      'aes_key': aesKeyB64,
+      'hmac_key': hmacKeyB64,
+    }, conflictAlgorithm: ConflictAlgorithm.replace); 
+    print("[DB] Chaves de sessão salvas para $peerUsername");
+  }
+
+  Future<Map<String, String>?> getSessionKeys(String peerUsername) async {
+    Database db = await instance.database;
+    final maps = await db.query(
+      _tableSessionKeys,
+      where: 'peer_username = ?',
+      whereArgs: [peerUsername],
+    );
+
+    if (maps.isNotEmpty) {
+      return {
+        'aes_key': maps.first['aes_key'] as String,
+        'hmac_key': maps.first['hmac_key'] as String,
+      };
+    }
+    return null;
+  }
+
   Future<List<ChatMessage>> getConversationHistory(String user1, String user2) async {
     Database db = await instance.database;
     final List<Map<String, dynamic>> maps = await db.query(_tableConversas,

@@ -56,6 +56,7 @@ class _LoginPageState extends State<LoginPage> {
               await DatabaseHelper.instance.initForUser(username);
               await DatabaseHelper.instance.saveKeyPair(privateKeyBase64, publicKeyBase64);
               await UserPreferences.saveUser(username);
+              await UserPreferences.setLoggedIn(true);
 
               if (mounted) {
                 Navigator.pushAndRemoveUntil(

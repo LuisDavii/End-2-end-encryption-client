@@ -95,6 +95,7 @@ class _WelcomePageState extends State<WelcomePage> {
 
         } else if (data['type'] == 'auth_response') {
           if (data['status'] == 'LOGIN_SUCCESS') {
+            await UserPreferences.setLoggedIn(true);
             if (mounted) {
               Navigator.pushReplacement(
                 context,
