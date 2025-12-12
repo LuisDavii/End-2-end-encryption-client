@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:cryptography/cryptography.dart';
 import 'package:client_chat/database_helper.dart';
+import 'package:client_chat/secure_channel_wrapper.dart'; 
 import 'dart:convert';
 
 class RegisterPage extends StatefulWidget {
@@ -26,83 +26,89 @@ class _RegisterPageState extends State<RegisterPage> {
     final username = _emailController.text;
     final password = _passwordController.text;
 
-    final algorithm = X25519();
-    final keyPair = await algorithm.newKeyPair();
+    try {
+      final algorithm = Ed25519();
+      final keyPair = await algorithm.newKeyPair();
 
-    // Extrai a chave pública
-    final publicKey = await keyPair.extractPublicKey();
-    final publicKeyBytes = publicKey.bytes;
-    final publicKeyBase64 = base64UrlEncode(publicKeyBytes);
+      final publicKey = await keyPair.extractPublicKey();
+      final publicKeyBase64 = base64Url.encode(publicKey.bytes);
 
-    // Extrai a chave privada
-    final privateKeyBytes = await keyPair.extractPrivateKeyBytes();
-    final privateKeyBase64 = base64UrlEncode(privateKeyBytes);
+      final privateKeyBytes = await keyPair.extractPrivateKeyBytes();
+      final privateKeyBase64 = base64Url.encode(privateKeyBytes);
 
-    //enviando dados de registro ao servidor
-    final wsUrl = Uri.parse('ws://10.0.2.2:12345');
-    final channel = WebSocketChannel.connect(wsUrl);
+      final secureChannel = SecureChannelWrapper();
+      await secureChannel.connectAndHandshake('ws://10.0.2.2:12345');
 
-    channel.stream.listen(
-      (message) async {
-        final data = jsonDecode(message);
-        String feedbackMessage = "Ocorreu um erro.";
+      secureChannel.stream.listen(
+        (message) async {
+          final data = jsonDecode(message);
+          String feedbackMessage = "Ocorreu um erro.";
 
-        if (data['type'] == 'auth_response') {
-          if (data['status'] == 'REGISTER_SUCCESS') {
-            feedbackMessage = "Usuário registado com sucesso!";
-            try {
-              // Inicializa o banco de dados para o novo usuário
-              await DatabaseHelper.instance.initForUser(username);
-              // Salva o par de chaves
-              await DatabaseHelper.instance.saveKeyPair(
-                privateKeyBase64,
-                publicKeyBase64,
-              );
+          if (data['type'] == 'auth_response') {
+            if (data['status'] == 'REGISTER_SUCCESS') {
+              feedbackMessage = "Usuário registado com sucesso!";
+              try {
+                await DatabaseHelper.instance.initForUser(username);
 
-              if (mounted) Navigator.pop(context);
-            } catch (e) {
-              feedbackMessage = "Erro ao guardar chaves locais: $e";
+                await DatabaseHelper.instance.saveKeyPair(
+                  privateKeyBase64,
+                  publicKeyBase64,
+                );
+
+                if (mounted) Navigator.pop(context);
+              } catch (e) {
+                feedbackMessage = "Erro ao guardar chaves locais: $e";
+              }
+            } else if (data['status'] == 'REGISTER_FAILED:USERNAME_EXISTS') {
+              feedbackMessage = "Este username já está em uso.";
+            } else {
+              feedbackMessage = "Falha no registro: ${data['message'] ?? 'Erro desconhecido'}";
             }
-          } else if (data['status'] == 'REGISTER_FAILED:USERNAME_EXISTS') {
-            feedbackMessage = "Este username já está em uso.";
-          } else{
-            feedbackMessage = "Falha no registro. Tente novamente.";
           }
-          
-        }
 
-        if (feedbackMessage.isNotEmpty && mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text(feedbackMessage)));
-        }
-        channel.sink.close();
-        if (mounted) {
-          setState(() {
-            _isLoading = false;
-          });
-        }
-      },
-      onError: (error) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Erro ao conectar ao servidor.')),
-        );
-        channel.sink.close();
-        if (mounted) {
-          setState(() {
-            _isLoading = false;
-          });
-        }
-      },
-    );
+          if (feedbackMessage.isNotEmpty && mounted) {
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(SnackBar(content: Text(feedbackMessage)));
+          }
 
-    final registerData = {
-      "type": "REGISTER",
-      "username": username,
-      "password": password,
-      "public_key": publicKeyBase64,
-    };
-    channel.sink.add(jsonEncode(registerData));
+          secureChannel.close();
+          if (mounted) {
+            setState(() {
+              _isLoading = false;
+            });
+          }
+        },
+        onError: (error) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Erro na conexão: $error')),
+          );
+          secureChannel.close();
+          if (mounted) {
+            setState(() {
+              _isLoading = false;
+            });
+          }
+        },
+      );
+
+      final registerData = {
+        "type": "REGISTER",
+        "username": username,
+        "password": password,
+        "public_key": publicKeyBase64,
+      };
+
+      await secureChannel.send(jsonEncode(registerData));
+
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Falha ao iniciar registro: $e')),
+      );
+      setState(() {
+        _isLoading = false;
+      });
+    }
   }
 
   @override
