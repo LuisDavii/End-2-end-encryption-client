@@ -87,7 +87,7 @@ class _HomePageState extends State<HomePage> {
             if (_currentChatPartner == peerUsername) {
               _messages.add(ChatMessage(from: peerUsername, content: text));
             }
-             // Salva no banco local
+
              DatabaseHelper.instance.insertMessage(
                ChatMessage(from: peerUsername, content: text), 
                widget.username
