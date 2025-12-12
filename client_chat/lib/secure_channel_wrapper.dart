@@ -131,8 +131,11 @@ class SecureChannelWrapper {
         await _deriveNewKeys(data, _tempKeyPair!, _tempSalt!);
         return; 
       }
-
-      _controller.add(decryptedString);
+      if (!_controller.isClosed) {
+        _controller.add(decryptedString);
+      } else {
+        print("[AVISO] Mensagem recebida mas o controller já estava fechado: $decryptedString");
+      }
 
     } catch (e) {
       print("[ERRO] Falha ao processar mensagem: $e");

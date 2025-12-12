@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:client_chat/screens/login_page.dart'; 
+import 'package:client_chat/screens/welcome_page.dart';
 
 void main() {
   runApp(const MyApp());
@@ -11,7 +11,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Login/Register Demo',
+      title: 'Chat Seguro',
       theme: ThemeData(
         primarySwatch: Colors.deepPurple,
         inputDecorationTheme: InputDecorationTheme(
@@ -21,7 +21,7 @@ class MyApp extends StatelessWidget {
         ),
       ),
      
-      home: const LoginPage(),
+      home: const WelcomePage(),
     );
   }
 }
