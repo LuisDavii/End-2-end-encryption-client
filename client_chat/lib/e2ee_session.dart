@@ -23,13 +23,37 @@ class E2EESession {
   List<int>? _myNonce; 
   List<int>? _tempSalt; 
 
+  int _msgCount = 0;
+  DateTime _sessionStartTime = DateTime.now();
+  int _maxMsgs = 100; 
+  Duration _maxDuration = const Duration(minutes: 60); 
+
   E2EESession({
     required this.myUsername,
     required this.peerUsername,
     required this.sendToServer,
     required this.onMessageReceived,
-    required this.isPeerOnline, 
-  });
+    required this.isPeerOnline,
+  }) {
+    _randomizeLimits(); 
+  }
+
+  void _randomizeLimits() {
+    final rng = Random.secure();
+    _maxMsgs = 50 + rng.nextInt(51); 
+    _maxDuration = Duration(minutes: 30 + rng.nextInt(31));
+  }
+
+  bool _needsRenegotiation() {
+    if (!isReady) return true;
+    
+    final duration = DateTime.now().difference(_sessionStartTime);
+    if (_msgCount >= _maxMsgs || duration >= _maxDuration) {
+      print("[E2EE $peerUsername] Sessão expirou ($_msgCount msgs / ${duration.inMinutes} min). Renovando...");
+      return true;
+    }
+    return false;
+  }
 
   Future<void> init() async {
     final keys = await DatabaseHelper.instance.getSessionKeys(peerUsername);
@@ -40,7 +64,12 @@ class E2EESession {
       _sessionKeyAes = SecretKey(aesBytes);
       _sessionKeyHmac = SecretKey(hmacBytes);
       isReady = true;
-      print("[E2EE $peerUsername] Chaves recuperadas do disco. Pronto para conversar.");
+
+      _sessionStartTime = DateTime.now();
+      _msgCount = 0;
+      _randomizeLimits();
+      
+      print("[E2EE $peerUsername] Chaves recuperadas. Sessão válida por $_maxMsgs msgs ou ${_maxDuration.inMinutes} min.");
     }
   }
 
@@ -50,7 +79,7 @@ class E2EESession {
       return;
     }
 
-    print("[E2EE $peerUsername] Iniciando handshake...");
+    print("[E2EE $peerUsername] Iniciando handshake (Renovação/Novo)...");
     _myDheKeyPair = await _dheAlgorithm.newKeyPair();
     final pubKey = await _myDheKeyPair!.extractPublicKey();
 
@@ -87,8 +116,7 @@ class E2EESession {
   }
 
   Future<void> _handleHandshakeInit(Map<String, dynamic> payload) async {
-    print("[E2EE $peerUsername] Respondendo ao handshake...");
-    
+    print("[E2EE $peerUsername] Recebido pedido de handshake...");
     _myDheKeyPair = await _dheAlgorithm.newKeyPair();
     final myPubKey = await _myDheKeyPair!.extractPublicKey();
 
@@ -142,11 +170,16 @@ class E2EESession {
     _sessionKeyAes = SecretKey(aesBytes);
     _sessionKeyHmac = SecretKey(hmacBytes);
 
+    _msgCount = 0;
+    _sessionStartTime = DateTime.now();
+    _randomizeLimits();
+    
     await DatabaseHelper.instance.saveSessionKeys(
       peerUsername, 
       base64Url.encode(aesBytes), 
       base64Url.encode(hmacBytes)
     );
+    print("[E2EE $peerUsername] Novas chaves estabelecidas e salvas.");
   }
 
   Future<void> _startMutualAuth() async {
@@ -207,10 +240,10 @@ class E2EESession {
       });
 
       isReady = true;
-      print("[E2EE] Sessão segura estabelecida com $peerUsername!");
+      print("[E2EE] Autenticação Mútua completa. Canal seguro com $peerUsername.");
 
     } else if (step == "RESPONSE_B") {
-      print("[E2EE] Minha assinatura foi aceita.");
+      print("[E2EE] Minha assinatura aceita pelo peer.");
       isReady = true;
     }
   }
@@ -243,9 +276,7 @@ class E2EESession {
   Future<String> _decryptMessage(Map<String, dynamic> package) async {
     if (_sessionKeyHmac == null || _sessionKeyAes == null) {
        await init(); 
-       if (_sessionKeyHmac == null) {
-         throw Exception("Erro: Tentativa de descriptografar sem chaves de sessão.");
-       }
+       if (_sessionKeyHmac == null) throw Exception("Erro: Chaves de sessão não encontradas.");
     }
 
     final iv = base64Url.decode(package['iv']);
@@ -277,21 +308,33 @@ class E2EESession {
   }
 
   Future<void> sendChatMessage(String text) async {
-    if (!isReady) {
-      await init();
+    if (!isReady) await init();
+
+    if (_needsRenegotiation()) {
+
+       if (isPeerOnline()) {
+          await startHandshake();
+
+          await Future.delayed(const Duration(milliseconds: 500)); 
+          if (!isReady) throw Exception("Negociação de chaves em andamento, tente novamente.");
+       } else if (!isReady) {
+          throw Exception("Sessão expirada e usuário offline. Não é possível renovar chaves.");
+       }
+
     }
 
     if (!isReady) {
       if (isPeerOnline()) {
         await startHandshake();
-        throw Exception("Iniciando negociação segura... Tente novamente em alguns segundos.");
-      } 
-      else {
-        throw Exception("Usuário offline e sem chaves de segurança negociadas. Não é possível enviar.");
+        throw Exception("Iniciando negociação segura... Tente novamente.");
+      } else {
+        throw Exception("Usuário offline e sem chaves. Não é possível enviar.");
       }
     }
-
+    
     final encryptedPackage = await _encryptMessage(text);
     sendToServer("E2E_MSG", encryptedPackage);
+
+    _msgCount++;
   }
 }
